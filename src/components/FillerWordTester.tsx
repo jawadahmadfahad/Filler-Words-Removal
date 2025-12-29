@@ -36,7 +36,11 @@ const categoryLabels: Record<FillerCategory, string> = {
   phrases: 'Filler Phrase'
 };
 
-export default function FillerWordTester() {
+interface FillerWordTesterProps {
+  embedded?: boolean;
+}
+
+export default function FillerWordTester({ embedded = false }: FillerWordTesterProps) {
   const [inputText, setInputText] = useState(SAMPLE_TEXTS[0]);
   const [level, setLevel] = useState<RemovalLevel>('medium');
   const [detectRepeated, setDetectRepeated] = useState(true);
@@ -118,22 +122,25 @@ export default function FillerWordTester() {
     return elements;
   };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-6">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="text-center space-y-2">
-          <div className="inline-flex items-center gap-2 bg-primary/20 px-4 py-2 rounded-full">
-            <Sparkles className="w-5 h-5 text-primary" />
-            <span className="text-sm font-medium text-primary">Filler Word Removal Utility</span>
+  // If embedded, skip the outer wrapper
+  const content = (
+    <div className={embedded ? "space-y-6" : "min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-6"}>
+      <div className={embedded ? "space-y-6" : "max-w-6xl mx-auto space-y-6"}>
+        {/* Header - only show if not embedded */}
+        {!embedded && (
+          <div className="text-center space-y-2">
+            <div className="inline-flex items-center gap-2 bg-primary/20 px-4 py-2 rounded-full">
+              <Sparkles className="w-5 h-5 text-primary" />
+              <span className="text-sm font-medium text-primary">Filler Word Removal Utility</span>
+            </div>
+            <h1 className="text-4xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
+              Clean Your Speech
+            </h1>
+            <p className="text-slate-400 max-w-xl mx-auto">
+              Detect and remove filler words, verbal crutches, and repeated words from your text
+            </p>
           </div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
-            Clean Your Speech
-          </h1>
-          <p className="text-slate-400 max-w-xl mx-auto">
-            Detect and remove filler words, verbal crutches, and repeated words from your text
-          </p>
-        </div>
+        )}
 
         {/* Controls */}
         <Card className="bg-slate-800/50 border-slate-700">
@@ -382,4 +389,6 @@ export default function FillerWordTester() {
       </div>
     </div>
   );
+
+  return content;
 }
