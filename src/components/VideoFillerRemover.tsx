@@ -1,5 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { analyzeFillers, type RemovalLevel } from '@/lib/fillerWords';
+import { loadTranscriber, transcribeAudio, isTranscriberReady, subscribeToTranscriber, type TranscriberState } from '@/lib/whisperTranscriber';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -10,12 +11,12 @@ import {
   CheckCircle2,
   AlertCircle,
   Download,
-  Sparkles
+  Sparkles,
+  Cpu
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 
-type ProcessingStatus = 'idle' | 'uploading' | 'extracting' | 'transcribing' | 'analyzing' | 'complete' | 'error';
+type ProcessingStatus = 'idle' | 'loading-model' | 'extracting' | 'transcribing' | 'analyzing' | 'complete' | 'error';
 
 interface TranscriptionResult {
   originalTranscript: string;
@@ -28,16 +29,30 @@ export default function VideoFillerRemover() {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [progress, setProgress] = useState(0);
+  const [modelProgress, setModelProgress] = useState(0);
   const [result, setResult] = useState<TranscriptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [level, setLevel] = useState<RemovalLevel>('medium');
+  const [modelReady, setModelReady] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    const unsubscribe = subscribeToTranscriber((state: TranscriberState) => {
+      if (state.status === 'ready') {
+        setModelReady(true);
+      } else if (state.status === 'loading') {
+        setModelProgress(state.progress);
+      }
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      // Validate file type
       const validTypes = ['video/mp4', 'video/webm', 'video/quicktime', 'audio/mpeg', 'audio/wav', 'audio/webm', 'audio/mp4'];
       if (!validTypes.includes(selectedFile.type)) {
         toast({
@@ -48,7 +63,6 @@ export default function VideoFillerRemover() {
         return;
       }
       
-      // Check file size (max 100MB)
       if (selectedFile.size > 100 * 1024 * 1024) {
         toast({
           title: 'File too large',
@@ -65,53 +79,69 @@ export default function VideoFillerRemover() {
     }
   };
 
-  const extractAudioFromFile = async (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        resolve(base64);
-      };
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsDataURL(file);
-    });
+  const extractAudioBuffer = async (file: File): Promise<Float32Array> => {
+    const arrayBuffer = await file.arrayBuffer();
+    const audioContext = new AudioContext({ sampleRate: 16000 });
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    
+    // Convert to mono Float32Array at 16kHz
+    const numChannels = audioBuffer.numberOfChannels;
+    const length = audioBuffer.length;
+    const output = new Float32Array(length);
+    
+    // Mix channels to mono
+    for (let channel = 0; channel < numChannels; channel++) {
+      const channelData = audioBuffer.getChannelData(channel);
+      for (let i = 0; i < length; i++) {
+        output[i] += channelData[i] / numChannels;
+      }
+    }
+    
+    await audioContext.close();
+    return output;
   };
 
   const processVideo = async () => {
     if (!file) return;
 
     try {
-      setStatus('uploading');
-      setProgress(10);
       setError(null);
 
-      // Read file as base64
+      // Load model if not ready
+      if (!isTranscriberReady()) {
+        setStatus('loading-model');
+        setProgress(0);
+        
+        toast({
+          title: 'Loading AI Model',
+          description: 'Downloading Whisper model (~200MB). This only happens once.',
+        });
+
+        const loaded = await loadTranscriber((p) => {
+          setModelProgress(p);
+          setProgress(p * 0.4); // 0-40% for model loading
+        });
+
+        if (!loaded) {
+          throw new Error('Failed to load transcription model. Please try again.');
+        }
+        
+        setModelReady(true);
+      }
+
+      // Extract audio
       setStatus('extracting');
-      setProgress(30);
-      const audioData = await extractAudioFromFile(file);
+      setProgress(45);
       
-      // Send to transcription API
+      const audioData = await extractAudioBuffer(file);
+      
+      // Transcribe
       setStatus('transcribing');
       setProgress(50);
       
-      const { data, error: fnError } = await supabase.functions.invoke('transcribe-audio', {
-        body: { 
-          audio: audioData,
-          mimeType: file.type
-        }
-      });
-
-      if (fnError) {
-        throw new Error(fnError.message || 'Transcription failed');
-      }
-
-      if (!data.success) {
-        throw new Error(data.error || 'Transcription failed');
-      }
-
-      const transcript = data.transcript || '';
+      const transcript = await transcribeAudio(audioData);
       
-      if (!transcript) {
+      if (!transcript || transcript.trim().length === 0) {
         throw new Error('No speech detected in the audio. Please ensure your video/audio contains clear speech.');
       }
 
@@ -164,9 +194,9 @@ export default function VideoFillerRemover() {
 
   const getStatusMessage = () => {
     switch (status) {
-      case 'uploading': return 'Uploading file...';
+      case 'loading-model': return `Loading AI model... ${modelProgress}%`;
       case 'extracting': return 'Extracting audio...';
-      case 'transcribing': return 'Transcribing speech (this may take a moment)...';
+      case 'transcribing': return 'Transcribing speech (this runs locally in your browser)...';
       case 'analyzing': return 'Analyzing filler words...';
       case 'complete': return 'Analysis complete!';
       case 'error': return 'Error occurred';
@@ -176,6 +206,18 @@ export default function VideoFillerRemover() {
 
   return (
     <div className="space-y-6">
+      {/* Model Status Badge */}
+      <div className="flex justify-center">
+        <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${
+          modelReady 
+            ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+            : 'bg-slate-700/50 text-slate-400 border border-slate-600'
+        }`}>
+          <Cpu className="w-4 h-4" />
+          {modelReady ? 'AI Model Ready (runs locally)' : 'AI Model will load on first use (~200MB)'}
+        </div>
+      </div>
+
       {/* Upload Section */}
       <Card className="bg-slate-800/50 border-slate-700">
         <CardHeader className="pb-3">
@@ -184,7 +226,7 @@ export default function VideoFillerRemover() {
             Upload Video/Audio
           </CardTitle>
           <CardDescription className="text-slate-400">
-            Upload a video or audio file to detect and remove filler words from the transcript
+            Upload a video or audio file — transcription runs entirely in your browser (no data leaves your device)
           </CardDescription>
         </CardHeader>
         <CardContent>
