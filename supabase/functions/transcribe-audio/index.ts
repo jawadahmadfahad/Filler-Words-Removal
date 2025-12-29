@@ -49,12 +49,12 @@ serve(async (req) => {
       throw new Error('No audio data provided');
     }
 
-    console.log('Received audio data, processing with OpenAI Whisper...');
+    console.log('Received audio data, processing with Hugging Face Whisper...');
     console.log('MIME type:', mimeType);
 
-    const apiKey = Deno.env.get('OPENAI_API_KEY');
+    const apiKey = Deno.env.get('HUGGINGFACE_API_KEY');
     if (!apiKey) {
-      throw new Error('OpenAI API key not configured');
+      throw new Error('Hugging Face API key not configured');
     }
 
     // Extract base64 content (remove data URL prefix if present)
@@ -63,51 +63,67 @@ serve(async (req) => {
     // Process base64 audio
     const binaryAudio = processBase64Chunks(audioContent);
     
-    // Determine file extension from mimeType
-    let fileExtension = 'webm';
-    if (mimeType.includes('mp4')) fileExtension = 'mp4';
-    else if (mimeType.includes('mp3') || mimeType.includes('mpeg')) fileExtension = 'mp3';
-    else if (mimeType.includes('wav')) fileExtension = 'wav';
-    else if (mimeType.includes('m4a')) fileExtension = 'm4a';
-    else if (mimeType.includes('webm')) fileExtension = 'webm';
-
-    console.log('File extension:', fileExtension);
     console.log('Audio size:', binaryAudio.length, 'bytes');
-
-    // Prepare form data for Whisper API
-    const formData = new FormData();
-    const blob = new Blob([binaryAudio.buffer as ArrayBuffer], { type: mimeType });
-    formData.append('file', blob, `audio.${fileExtension}`);
-    formData.append('file', blob, `audio.${fileExtension}`);
-    formData.append('model', 'whisper-1');
-    formData.append('response_format', 'verbose_json');
-
-    console.log('Sending request to OpenAI Whisper API...');
+    console.log('Sending request to Hugging Face Whisper Medium API...');
     
-    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: formData,
-    });
+    // Use Hugging Face Inference API with Whisper Medium model
+    const response = await fetch(
+      'https://api-inference.huggingface.co/models/openai/whisper-medium',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/octet-stream',
+        },
+        body: binaryAudio.buffer as ArrayBuffer,
+      }
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('OpenAI Whisper API error:', response.status, errorText);
-      throw new Error(`OpenAI Whisper API error: ${errorText}`);
+      console.error('Hugging Face API error:', response.status, errorText);
+      
+      // Check if model is loading
+      if (response.status === 503) {
+        const errorData = JSON.parse(errorText);
+        if (errorData.error && errorData.error.includes('loading')) {
+          return new Response(
+            JSON.stringify({ 
+              error: 'Model is loading, please try again in about 20 seconds.',
+              success: false,
+              retryAfter: errorData.estimated_time || 20
+            }),
+            {
+              status: 503,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            }
+          );
+        }
+      }
+      
+      throw new Error(`Hugging Face API error: ${errorText}`);
     }
 
     const result = await response.json();
     console.log('Whisper transcription successful');
-    console.log('Transcript length:', result.text?.length || 0, 'characters');
+    console.log('Result:', JSON.stringify(result));
+
+    // Handle different response formats
+    let transcript = '';
+    if (typeof result === 'string') {
+      transcript = result;
+    } else if (result.text) {
+      transcript = result.text;
+    } else if (Array.isArray(result) && result[0]?.text) {
+      transcript = result[0].text;
+    }
+
+    console.log('Transcript length:', transcript.length, 'characters');
 
     return new Response(
       JSON.stringify({ 
-        transcript: result.text || '',
-        success: true,
-        duration: result.duration,
-        language: result.language
+        transcript: transcript.trim(),
+        success: true
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
