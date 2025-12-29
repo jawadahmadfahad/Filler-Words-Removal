@@ -106,18 +106,32 @@ export async function transcribeAudio(
   notifyListeners({ status: 'transcribing', progress: 0 });
 
   try {
-    console.log('Starting transcription...');
+    console.log('Starting transcription with filler word preservation...');
     
+    // Use word-level timestamps to preserve more original speech patterns
+    // and reduce aggressive normalization that removes filler words
     const result = await transcriber(audioData, {
       chunk_length_s: 30,
       stride_length_s: 5,
-      return_timestamps: false,
+      return_timestamps: 'word',
+      // Reduce temperature to get more literal transcription
+      temperature: 0,
+      // Don't suppress tokens - helps preserve filler words
+      suppress_tokens: [],
     });
 
     console.log('Transcription complete:', result);
     notifyListeners({ status: 'ready', progress: 100 });
     
-    return result.text || '';
+    // Extract text from word-level timestamps if available
+    let transcribedText = '';
+    if (result.chunks && Array.isArray(result.chunks)) {
+      transcribedText = result.chunks.map((chunk: any) => chunk.text).join('');
+    } else {
+      transcribedText = result.text || '';
+    }
+    
+    return transcribedText;
   } catch (error) {
     console.error('Transcription error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
