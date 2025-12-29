@@ -49,88 +49,65 @@ serve(async (req) => {
       throw new Error('No audio data provided');
     }
 
-    console.log('Received audio data, processing...');
+    console.log('Received audio data, processing with OpenAI Whisper...');
     console.log('MIME type:', mimeType);
 
-    const apiKey = Deno.env.get('GOOGLE_SPEECH_API_KEY');
+    const apiKey = Deno.env.get('OPENAI_API_KEY');
     if (!apiKey) {
-      throw new Error('Google Speech API key not configured');
+      throw new Error('OpenAI API key not configured');
     }
 
-    // Process base64 audio
+    // Extract base64 content (remove data URL prefix if present)
     const audioContent = audio.includes(',') ? audio.split(',')[1] : audio;
     
-    // Determine encoding from mimeType
-    let encoding = 'WEBM_OPUS';
-    let sampleRateHertz = 48000;
+    // Process base64 audio
+    const binaryAudio = processBase64Chunks(audioContent);
     
-    if (mimeType.includes('mp4') || mimeType.includes('m4a')) {
-      encoding = 'MP3';
-      sampleRateHertz = 44100;
-    } else if (mimeType.includes('wav')) {
-      encoding = 'LINEAR16';
-      sampleRateHertz = 44100;
-    } else if (mimeType.includes('mp3') || mimeType.includes('mpeg')) {
-      encoding = 'MP3';
-      sampleRateHertz = 44100;
-    }
+    // Determine file extension from mimeType
+    let fileExtension = 'webm';
+    if (mimeType.includes('mp4')) fileExtension = 'mp4';
+    else if (mimeType.includes('mp3') || mimeType.includes('mpeg')) fileExtension = 'mp3';
+    else if (mimeType.includes('wav')) fileExtension = 'wav';
+    else if (mimeType.includes('m4a')) fileExtension = 'm4a';
+    else if (mimeType.includes('webm')) fileExtension = 'webm';
 
-    console.log('Using encoding:', encoding, 'sample rate:', sampleRateHertz);
+    console.log('File extension:', fileExtension);
+    console.log('Audio size:', binaryAudio.length, 'bytes');
 
-    // Call Google Speech-to-Text API
-    const speechUrl = `https://speech.googleapis.com/v1/speech:recognize?key=${apiKey}`;
+    // Prepare form data for Whisper API
+    const formData = new FormData();
+    const blob = new Blob([binaryAudio.buffer as ArrayBuffer], { type: mimeType });
+    formData.append('file', blob, `audio.${fileExtension}`);
+    formData.append('file', blob, `audio.${fileExtension}`);
+    formData.append('model', 'whisper-1');
+    formData.append('response_format', 'verbose_json');
+
+    console.log('Sending request to OpenAI Whisper API...');
     
-    const requestBody = {
-      config: {
-        encoding,
-        sampleRateHertz,
-        languageCode: 'en-US',
-        enableAutomaticPunctuation: true,
-        model: 'latest_long',
-        useEnhanced: true,
-        speechContexts: [{
-          phrases: ['um', 'uh', 'er', 'ah', 'hmm', 'like', 'you know', 'basically', 'actually', 'literally']
-        }]
-      },
-      audio: {
-        content: audioContent
-      }
-    };
-
-    console.log('Sending request to Google Speech API...');
-    
-    const response = await fetch(speechUrl, {
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify(requestBody),
+      body: formData,
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Google API error:', errorText);
-      throw new Error(`Google Speech API error: ${errorText}`);
+      console.error('OpenAI Whisper API error:', response.status, errorText);
+      throw new Error(`OpenAI Whisper API error: ${errorText}`);
     }
 
     const result = await response.json();
-    console.log('Google API response:', JSON.stringify(result));
-
-    // Extract transcription
-    let transcript = '';
-    if (result.results) {
-      transcript = result.results
-        .map((r: any) => r.alternatives?.[0]?.transcript || '')
-        .join(' ')
-        .trim();
-    }
-
-    console.log('Transcription:', transcript);
+    console.log('Whisper transcription successful');
+    console.log('Transcript length:', result.text?.length || 0, 'characters');
 
     return new Response(
       JSON.stringify({ 
-        transcript,
-        success: true 
+        transcript: result.text || '',
+        success: true,
+        duration: result.duration,
+        language: result.language
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
