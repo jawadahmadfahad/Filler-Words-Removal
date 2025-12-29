@@ -64,16 +64,15 @@ serve(async (req) => {
     const binaryAudio = processBase64Chunks(audioContent);
     
     console.log('Audio size:', binaryAudio.length, 'bytes');
-    console.log('Sending request to Hugging Face Whisper Medium API...');
+    console.log('Sending request to Hugging Face Whisper API...');
     
-    // Use Hugging Face Inference API with Whisper Medium model
+    // Use Hugging Face Inference API with Whisper large-v3 model (free tier available)
     const response = await fetch(
-      'https://api-inference.huggingface.co/models/openai/whisper-medium',
+      'https://api-inference.huggingface.co/models/openai/whisper-large-v3',
       {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/octet-stream',
         },
         body: binaryAudio.buffer as ArrayBuffer,
       }
