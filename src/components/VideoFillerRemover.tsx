@@ -497,6 +497,82 @@ export default function VideoFillerRemover() {
       {/* Results Section */}
       {result && (
         <>
+          {/* Transcripts - Original & Cleaned */}
+          <div className="grid md:grid-cols-2 gap-6">
+            <Card className="bg-slate-800/50 border-slate-700">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg text-white">Original Transcript</CardTitle>
+                <CardDescription className="text-slate-400">
+                  {result.originalTranscript.split(' ').length} words
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="p-3 bg-slate-900 border border-slate-600 rounded-md text-white max-h-[200px] overflow-y-auto">
+                  {result.originalTranscript}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-slate-800/50 border-slate-700">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg text-white flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-green-500" />
+                  Cleaned Transcript
+                </CardTitle>
+                <CardDescription className="text-slate-400">
+                  {result.cleanedTranscript.split(' ').length} words
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="p-3 bg-slate-900 border border-slate-600 rounded-md text-white max-h-[200px] overflow-y-auto">
+                  {result.cleanedTranscript}
+                </div>
+                <Button
+                  onClick={handleDownload}
+                  variant="outline"
+                  className="w-full mt-3 bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Download Transcript
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Detected Fillers - Highlighted Preview */}
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center gap-2 text-white">
+                <BarChart3 className="w-5 h-5 text-blue-500" />
+                Detected Fillers
+              </CardTitle>
+              <CardDescription className="text-slate-400">
+                Filler words highlighted by category
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {/* Legend */}
+              <div className="flex flex-wrap gap-3 mb-4">
+                <Badge className={`${categoryColors.hesitation} border`}>
+                  Hesitation (um, uh, er)
+                </Badge>
+                <Badge className={`${categoryColors.crutches} border`}>
+                  Verbal Crutch (like, basically)
+                </Badge>
+                <Badge className={`${categoryColors.phrases} border`}>
+                  Filler Phrase (you know, I mean)
+                </Badge>
+              </div>
+              
+              {/* Highlighted Text */}
+              <div className="p-4 bg-slate-900 border border-slate-600 rounded-md text-white leading-relaxed">
+                {result.originalTranscript ? renderHighlightedText() : (
+                  <span className="text-slate-500">No transcript available...</span>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
             <Card className="bg-slate-800/50 border-slate-700">
@@ -545,97 +621,18 @@ export default function VideoFillerRemover() {
             </Card>
           </div>
 
-          {/* Transcripts */}
-          <div className="grid md:grid-cols-2 gap-6">
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg text-white">Original Transcript</CardTitle>
-                <CardDescription className="text-slate-400">
-                  {result.originalTranscript.split(' ').length} words
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="p-3 bg-slate-900 border border-slate-600 rounded-md text-white max-h-[300px] overflow-y-auto">
-                  {result.originalTranscript}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg text-white flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-green-500" />
-                  Cleaned Transcript
-                </CardTitle>
-                <CardDescription className="text-slate-400">
-                  {result.cleanedTranscript.split(' ').length} words
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="p-3 bg-slate-900 border border-slate-600 rounded-md text-white max-h-[300px] overflow-y-auto">
-                  {result.cleanedTranscript}
-                </div>
-                <Button
-                  onClick={handleDownload}
-                  variant="outline"
-                  className="w-full mt-3 bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600"
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  Download Transcript
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Detected Fillers Highlighted - Same as Text Tab */}
-          <Card className="bg-slate-800/50 border-slate-700">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg flex items-center gap-2 text-white">
-                <BarChart3 className="w-5 h-5 text-blue-500" />
-                Detected Fillers
-              </CardTitle>
-              <CardDescription className="text-slate-400">
-                Filler words highlighted by category
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* Legend */}
-              <div className="flex flex-wrap gap-3 mb-4">
-                <Badge className={`${categoryColors.hesitation} border`}>
-                  Hesitation (um, uh, er)
-                </Badge>
-                <Badge className={`${categoryColors.crutches} border`}>
-                  Verbal Crutch (like, basically)
-                </Badge>
-                <Badge className={`${categoryColors.phrases} border`}>
-                  Filler Phrase (you know, I mean)
-                </Badge>
-              </div>
-              
-              {/* Highlighted Text */}
-              <div className="p-4 bg-slate-900 border border-slate-600 rounded-md text-white leading-relaxed">
-                {result.originalTranscript ? renderHighlightedText() : (
-                  <span className="text-slate-500">No transcript available...</span>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Filler Words Reference */}
           <Card className="bg-slate-800/50 border-slate-700">
             <CardHeader className="pb-3">
               <CardTitle className="text-lg text-white">Filler Words Reference</CardTitle>
               <CardDescription className="text-slate-400">
-                Words detected based on your category selections
+                Words detected at each removal level
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid md:grid-cols-3 gap-4">
                 <div className={!categoryFilter.hesitation ? 'opacity-40' : ''}>
-                  <h4 className="font-medium text-red-400 mb-2 flex items-center gap-2">
-                    Hesitation Sounds
-                    {!categoryFilter.hesitation && <span className="text-xs text-slate-500">(disabled)</span>}
-                  </h4>
+                  <h4 className="font-medium text-red-400 mb-2">Hesitation Sounds</h4>
                   <div className="flex flex-wrap gap-1">
                     {FILLER_WORDS.en.hesitation.slice(0, 12).map((word) => (
                       <Badge key={word} variant="outline" className="bg-red-500/10 border-red-500/30 text-red-300">
@@ -645,10 +642,7 @@ export default function VideoFillerRemover() {
                   </div>
                 </div>
                 <div className={!categoryFilter.crutches ? 'opacity-40' : ''}>
-                  <h4 className="font-medium text-amber-400 mb-2 flex items-center gap-2">
-                    Verbal Crutches
-                    {!categoryFilter.crutches && <span className="text-xs text-slate-500">(disabled)</span>}
-                  </h4>
+                  <h4 className="font-medium text-amber-400 mb-2">Verbal Crutches</h4>
                   <div className="flex flex-wrap gap-1">
                     {FILLER_WORDS.en.crutches.slice(0, 12).map((word) => (
                       <Badge key={word} variant="outline" className="bg-amber-500/10 border-amber-500/30 text-amber-300">
@@ -658,10 +652,7 @@ export default function VideoFillerRemover() {
                   </div>
                 </div>
                 <div className={!categoryFilter.phrases ? 'opacity-40' : ''}>
-                  <h4 className="font-medium text-purple-400 mb-2 flex items-center gap-2">
-                    Filler Phrases
-                    {!categoryFilter.phrases && <span className="text-xs text-slate-500">(disabled)</span>}
-                  </h4>
+                  <h4 className="font-medium text-purple-400 mb-2">Filler Phrases</h4>
                   <div className="flex flex-wrap gap-1">
                     {FILLER_WORDS.en.phrases.slice(0, 8).map((phrase) => (
                       <Badge key={phrase} variant="outline" className="bg-purple-500/10 border-purple-500/30 text-purple-300">
