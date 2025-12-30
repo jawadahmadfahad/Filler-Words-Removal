@@ -1,9 +1,12 @@
-import { useState, useRef, useEffect } from 'react';
-import { analyzeFillers, type RemovalLevel } from '@/lib/fillerWords';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { analyzeFillers, FILLER_WORDS, type RemovalLevel, type FillerCategory, type CategoryFilter, type DetectedFiller } from '@/lib/fillerWords';
 import { checkBackendHealth, transcribeFile, getBackendUrl } from '@/lib/backendApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { 
   Upload, 
   Loader2, 
@@ -14,7 +17,8 @@ import {
   Sparkles,
   Server,
   Wifi,
-  WifiOff
+  WifiOff,
+  BarChart3
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -23,18 +27,44 @@ type ProcessingStatus = 'idle' | 'checking-backend' | 'transcribing' | 'analyzin
 interface TranscriptionResult {
   originalTranscript: string;
   cleanedTranscript: string;
-  fillersDetected: number;
-  reductionPercentage: number;
+  detectedFillers: DetectedFiller[];
+  stats: {
+    totalFillers: number;
+    hesitationCount: number;
+    crutchesCount: number;
+    phrasesCount: number;
+    repeatedWordsCount: number;
+    reductionPercentage: number;
+  };
 }
+
+const categoryColors: Record<FillerCategory, string> = {
+  hesitation: 'bg-red-100 text-red-800 border-red-200',
+  crutches: 'bg-amber-100 text-amber-800 border-amber-200',
+  phrases: 'bg-purple-100 text-purple-800 border-purple-200'
+};
+
+const categoryLabels: Record<FillerCategory, string> = {
+  hesitation: 'Hesitation',
+  crutches: 'Verbal Crutch',
+  phrases: 'Filler Phrase'
+};
 
 export default function VideoFillerRemover() {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<TranscriptionResult | null>(null);
+  const [rawTranscript, setRawTranscript] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [level, setLevel] = useState<RemovalLevel>('medium');
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>({
+    hesitation: true,
+    crutches: true,
+    phrases: true
+  });
+  const [detectRepeated, setDetectRepeated] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -46,10 +76,35 @@ export default function VideoFillerRemover() {
     };
     
     checkBackend();
-    const interval = setInterval(checkBackend, 10000); // Check every 10s
+    const interval = setInterval(checkBackend, 10000);
     
     return () => clearInterval(interval);
   }, []);
+
+  // Re-analyze when filters change
+  const analysis = useMemo(() => {
+    if (!rawTranscript) return null;
+    return analyzeFillers(rawTranscript, level, detectRepeated, 'en', categoryFilter);
+  }, [rawTranscript, level, detectRepeated, categoryFilter]);
+
+  // Update result when analysis changes
+  useEffect(() => {
+    if (analysis && rawTranscript) {
+      setResult({
+        originalTranscript: rawTranscript,
+        cleanedTranscript: analysis.cleanedText,
+        detectedFillers: analysis.detectedFillers,
+        stats: {
+          totalFillers: analysis.stats.totalFillers,
+          hesitationCount: analysis.stats.hesitationCount,
+          crutchesCount: analysis.stats.crutchesCount,
+          phrasesCount: analysis.stats.phrasesCount,
+          repeatedWordsCount: analysis.stats.repeatedWordsCount,
+          reductionPercentage: analysis.stats.reductionPercentage
+        }
+      });
+    }
+  }, [analysis, rawTranscript]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -64,7 +119,7 @@ export default function VideoFillerRemover() {
         return;
       }
       
-      if (selectedFile.size > 500 * 1024 * 1024) { // 500MB limit for local processing
+      if (selectedFile.size > 500 * 1024 * 1024) {
         toast({
           title: 'File too large',
           description: 'Maximum file size is 500MB',
@@ -75,9 +130,17 @@ export default function VideoFillerRemover() {
       
       setFile(selectedFile);
       setResult(null);
+      setRawTranscript('');
       setError(null);
       setStatus('idle');
     }
+  };
+
+  const toggleCategory = (category: keyof CategoryFilter) => {
+    setCategoryFilter(prev => ({
+      ...prev,
+      [category]: !prev[category]
+    }));
   };
 
   const processVideo = async () => {
@@ -118,19 +181,27 @@ export default function VideoFillerRemover() {
         throw new Error('No speech detected in the audio.');
       }
 
+      setRawTranscript(transcript);
       setProgress(70);
 
-      // Analyze and remove fillers (locally)
+      // Analyze and remove fillers
       setStatus('analyzing');
       setProgress(80);
       
-      const analysis = analyzeFillers(transcript, level, true);
+      const analysisResult = analyzeFillers(transcript, level, detectRepeated, 'en', categoryFilter);
       
       setResult({
         originalTranscript: transcript,
-        cleanedTranscript: analysis.cleanedText,
-        fillersDetected: analysis.stats.totalFillers,
-        reductionPercentage: analysis.stats.reductionPercentage
+        cleanedTranscript: analysisResult.cleanedText,
+        detectedFillers: analysisResult.detectedFillers,
+        stats: {
+          totalFillers: analysisResult.stats.totalFillers,
+          hesitationCount: analysisResult.stats.hesitationCount,
+          crutchesCount: analysisResult.stats.crutchesCount,
+          phrasesCount: analysisResult.stats.phrasesCount,
+          repeatedWordsCount: analysisResult.stats.repeatedWordsCount,
+          reductionPercentage: analysisResult.stats.reductionPercentage
+        }
       });
 
       setStatus('complete');
@@ -138,7 +209,7 @@ export default function VideoFillerRemover() {
       
       toast({
         title: 'Analysis complete!',
-        description: `Detected ${analysis.stats.totalFillers} filler words`
+        description: `Detected ${analysisResult.stats.totalFillers} filler words`
       });
 
     } catch (err: any) {
@@ -156,7 +227,7 @@ export default function VideoFillerRemover() {
   const handleDownload = () => {
     if (!result) return;
     
-    const content = `Original Transcript:\n${result.originalTranscript}\n\n---\n\nCleaned Transcript (Filler Words Removed):\n${result.cleanedTranscript}\n\n---\n\nStatistics:\n- Filler words detected: ${result.fillersDetected}\n- Reduction: ${result.reductionPercentage}%`;
+    const content = `Original Transcript:\n${result.originalTranscript}\n\n---\n\nCleaned Transcript (Filler Words Removed):\n${result.cleanedTranscript}\n\n---\n\nStatistics:\n- Total fillers detected: ${result.stats.totalFillers}\n- Hesitations: ${result.stats.hesitationCount}\n- Crutches: ${result.stats.crutchesCount}\n- Phrases: ${result.stats.phrasesCount}\n- Repeated words: ${result.stats.repeatedWordsCount}\n- Reduction: ${result.stats.reductionPercentage}%`;
     
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -176,6 +247,61 @@ export default function VideoFillerRemover() {
       case 'error': return 'Error occurred';
       default: return '';
     }
+  };
+
+  // Render text with highlighted fillers
+  const renderHighlightedText = () => {
+    if (!result || !result.originalTranscript) return null;
+    
+    let lastIndex = 0;
+    const elements: JSX.Element[] = [];
+    
+    // Sort fillers by start index
+    const sortedFillers = [...result.detectedFillers].sort((a, b) => a.startIndex - b.startIndex);
+    
+    // Remove overlapping fillers (keep the longer ones)
+    const nonOverlapping = sortedFillers.filter((filler, index) => {
+      for (let i = 0; i < index; i++) {
+        const prev = sortedFillers[i];
+        if (filler.startIndex >= prev.startIndex && filler.startIndex < prev.endIndex) {
+          return false;
+        }
+      }
+      return true;
+    });
+    
+    for (const filler of nonOverlapping) {
+      // Add text before filler
+      if (filler.startIndex > lastIndex) {
+        elements.push(
+          <span key={`text-${lastIndex}`}>
+            {result.originalTranscript.slice(lastIndex, filler.startIndex)}
+          </span>
+        );
+      }
+      
+      // Add highlighted filler
+      elements.push(
+        <mark 
+          key={`filler-${filler.startIndex}`}
+          className={`px-1 py-0.5 rounded font-medium ${categoryColors[filler.category]}`}
+          title={categoryLabels[filler.category]}
+        >
+          {result.originalTranscript.slice(filler.startIndex, filler.endIndex)}
+        </mark>
+      );
+      
+      lastIndex = filler.endIndex;
+    }
+    
+    // Add remaining text
+    if (lastIndex < result.originalTranscript.length) {
+      elements.push(
+        <span key={`text-end`}>{result.originalTranscript.slice(lastIndex)}</span>
+      );
+    }
+    
+    return elements;
   };
 
   return (
@@ -254,6 +380,57 @@ export default function VideoFillerRemover() {
             )}
           </div>
 
+          {/* Category Filters */}
+          <div className="mt-4 p-4 bg-slate-900/50 rounded-lg border border-slate-700">
+            <Label className="text-slate-300 font-medium mb-3 block">Detection Categories:</Label>
+            <div className="flex flex-wrap gap-4">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="cat-hesitation"
+                  checked={categoryFilter.hesitation}
+                  onCheckedChange={() => toggleCategory('hesitation')}
+                  className="border-red-500 data-[state=checked]:bg-red-500"
+                />
+                <Label htmlFor="cat-hesitation" className="text-red-400 cursor-pointer">
+                  Hesitation (um, uh, er)
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="cat-crutches"
+                  checked={categoryFilter.crutches}
+                  onCheckedChange={() => toggleCategory('crutches')}
+                  className="border-amber-500 data-[state=checked]:bg-amber-500"
+                />
+                <Label htmlFor="cat-crutches" className="text-amber-400 cursor-pointer">
+                  Crutches (like, basically)
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="cat-phrases"
+                  checked={categoryFilter.phrases}
+                  onCheckedChange={() => toggleCategory('phrases')}
+                  className="border-purple-500 data-[state=checked]:bg-purple-500"
+                />
+                <Label htmlFor="cat-phrases" className="text-purple-400 cursor-pointer">
+                  Phrases (you know, I mean)
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="detect-repeated"
+                  checked={detectRepeated}
+                  onCheckedChange={() => setDetectRepeated(!detectRepeated)}
+                  className="border-blue-500 data-[state=checked]:bg-blue-500"
+                />
+                <Label htmlFor="detect-repeated" className="text-blue-400 cursor-pointer">
+                  Repeated words
+                </Label>
+              </div>
+            </div>
+          </div>
+
           {/* Level Selection */}
           <div className="mt-4 flex items-center gap-3">
             <span className="text-slate-300 font-medium">Removal Level:</span>
@@ -321,29 +498,49 @@ export default function VideoFillerRemover() {
       {result && (
         <>
           {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
             <Card className="bg-slate-800/50 border-slate-700">
               <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-primary">{result.fillersDetected}</div>
-                <div className="text-xs text-slate-400 mt-1">Fillers Detected</div>
+                <div className="text-3xl font-bold text-primary">{result.stats.totalFillers}</div>
+                <div className="text-xs text-slate-400 mt-1">Total Fillers</div>
               </CardContent>
             </Card>
             <Card className="bg-slate-800/50 border-slate-700">
               <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-green-500">{result.reductionPercentage}%</div>
+                <div className="text-3xl font-bold text-red-500">{result.stats.hesitationCount}</div>
+                <div className="text-xs text-slate-400 mt-1">Hesitations</div>
+              </CardContent>
+            </Card>
+            <Card className="bg-slate-800/50 border-slate-700">
+              <CardContent className="p-4 text-center">
+                <div className="text-3xl font-bold text-amber-500">{result.stats.crutchesCount}</div>
+                <div className="text-xs text-slate-400 mt-1">Crutches</div>
+              </CardContent>
+            </Card>
+            <Card className="bg-slate-800/50 border-slate-700">
+              <CardContent className="p-4 text-center">
+                <div className="text-3xl font-bold text-purple-500">{result.stats.phrasesCount}</div>
+                <div className="text-xs text-slate-400 mt-1">Phrases</div>
+              </CardContent>
+            </Card>
+            <Card className="bg-slate-800/50 border-slate-700">
+              <CardContent className="p-4 text-center">
+                <div className="text-3xl font-bold text-blue-500">{result.stats.repeatedWordsCount}</div>
+                <div className="text-xs text-slate-400 mt-1">Repeated</div>
+              </CardContent>
+            </Card>
+            <Card className="bg-slate-800/50 border-slate-700">
+              <CardContent className="p-4 text-center">
+                <div className="text-3xl font-bold text-green-500">{result.stats.reductionPercentage}%</div>
                 <div className="text-xs text-slate-400 mt-1">Reduction</div>
               </CardContent>
             </Card>
             <Card className="bg-slate-800/50 border-slate-700">
               <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-blue-500">{result.originalTranscript.split(' ').length}</div>
-                <div className="text-xs text-slate-400 mt-1">Original Words</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-amber-500">{result.cleanedTranscript.split(' ').length}</div>
-                <div className="text-xs text-slate-400 mt-1">Cleaned Words</div>
+                <div className="text-3xl font-bold text-slate-300">
+                  {result.originalTranscript.split(' ').length - result.cleanedTranscript.split(' ').length}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">Words Saved</div>
               </CardContent>
             </Card>
           </div>
@@ -353,6 +550,9 @@ export default function VideoFillerRemover() {
             <Card className="bg-slate-800/50 border-slate-700">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg text-white">Original Transcript</CardTitle>
+                <CardDescription className="text-slate-400">
+                  {result.originalTranscript.split(' ').length} words
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="p-3 bg-slate-900 border border-slate-600 rounded-md text-white max-h-[300px] overflow-y-auto">
@@ -367,6 +567,9 @@ export default function VideoFillerRemover() {
                   <CheckCircle2 className="w-5 h-5 text-green-500" />
                   Cleaned Transcript
                 </CardTitle>
+                <CardDescription className="text-slate-400">
+                  {result.cleanedTranscript.split(' ').length} words
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="p-3 bg-slate-900 border border-slate-600 rounded-md text-white max-h-[300px] overflow-y-auto">
@@ -383,6 +586,91 @@ export default function VideoFillerRemover() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Detected Fillers Highlighted */}
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center gap-2 text-white">
+                <BarChart3 className="w-5 h-5 text-blue-500" />
+                Detected Fillers
+              </CardTitle>
+              <CardDescription className="text-slate-400">
+                Filler words highlighted by category
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {/* Legend */}
+              <div className="flex flex-wrap gap-3 mb-4">
+                <Badge className={`${categoryColors.hesitation} border`}>
+                  Hesitation (um, uh, er)
+                </Badge>
+                <Badge className={`${categoryColors.crutches} border`}>
+                  Verbal Crutch (like, basically)
+                </Badge>
+                <Badge className={`${categoryColors.phrases} border`}>
+                  Filler Phrase (you know, I mean)
+                </Badge>
+              </div>
+              
+              {/* Highlighted Text */}
+              <div className="p-4 bg-slate-900 border border-slate-600 rounded-md text-white leading-relaxed max-h-[400px] overflow-y-auto">
+                {renderHighlightedText()}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Filler Words Reference */}
+          <Card className="bg-slate-800/50 border-slate-700">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg text-white">Filler Words Reference</CardTitle>
+              <CardDescription className="text-slate-400">
+                Words detected based on your category selections
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid md:grid-cols-3 gap-4">
+                <div className={!categoryFilter.hesitation ? 'opacity-40' : ''}>
+                  <h4 className="font-medium text-red-400 mb-2 flex items-center gap-2">
+                    Hesitation Sounds
+                    {!categoryFilter.hesitation && <span className="text-xs text-slate-500">(disabled)</span>}
+                  </h4>
+                  <div className="flex flex-wrap gap-1">
+                    {FILLER_WORDS.en.hesitation.slice(0, 12).map((word) => (
+                      <Badge key={word} variant="outline" className="bg-red-500/10 border-red-500/30 text-red-300">
+                        {word}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                <div className={!categoryFilter.crutches ? 'opacity-40' : ''}>
+                  <h4 className="font-medium text-amber-400 mb-2 flex items-center gap-2">
+                    Verbal Crutches
+                    {!categoryFilter.crutches && <span className="text-xs text-slate-500">(disabled)</span>}
+                  </h4>
+                  <div className="flex flex-wrap gap-1">
+                    {FILLER_WORDS.en.crutches.slice(0, 12).map((word) => (
+                      <Badge key={word} variant="outline" className="bg-amber-500/10 border-amber-500/30 text-amber-300">
+                        {word}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                <div className={!categoryFilter.phrases ? 'opacity-40' : ''}>
+                  <h4 className="font-medium text-purple-400 mb-2 flex items-center gap-2">
+                    Filler Phrases
+                    {!categoryFilter.phrases && <span className="text-xs text-slate-500">(disabled)</span>}
+                  </h4>
+                  <div className="flex flex-wrap gap-1">
+                    {FILLER_WORDS.en.phrases.slice(0, 8).map((phrase) => (
+                      <Badge key={phrase} variant="outline" className="bg-purple-500/10 border-purple-500/30 text-purple-300">
+                        {phrase}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </>
       )}
     </div>
