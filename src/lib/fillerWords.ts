@@ -41,6 +41,12 @@ export const FILLER_WORDS = {
 export type FillerCategory = 'hesitation' | 'crutches' | 'phrases';
 export type RemovalLevel = 'conservative' | 'medium' | 'aggressive';
 
+export interface CategoryFilter {
+  hesitation: boolean;
+  crutches: boolean;
+  phrases: boolean;
+}
+
 export interface DetectedFiller {
   word: string;
   category: FillerCategory;
@@ -64,10 +70,24 @@ export interface FillerAnalysis {
   };
 }
 
-// Get filler words based on removal level
-export function getFillersByLevel(level: RemovalLevel, language: string = 'en'): string[] {
+// Get filler words based on removal level and category filter
+export function getFillersByLevel(
+  level: RemovalLevel, 
+  language: string = 'en',
+  categoryFilter?: CategoryFilter
+): string[] {
   const lang = FILLER_WORDS[language as keyof typeof FILLER_WORDS] || FILLER_WORDS.en;
   
+  // If category filter provided, use it
+  if (categoryFilter) {
+    const fillers: string[] = [];
+    if (categoryFilter.hesitation) fillers.push(...lang.hesitation);
+    if (categoryFilter.crutches) fillers.push(...lang.crutches);
+    if (categoryFilter.phrases) fillers.push(...lang.phrases);
+    return fillers;
+  }
+  
+  // Otherwise use level-based filtering
   switch (level) {
     case 'conservative':
       return [...lang.hesitation];
@@ -107,9 +127,10 @@ export function analyzeFillers(
   text: string,
   level: RemovalLevel = 'medium',
   detectRepeated: boolean = true,
-  language: string = 'en'
+  language: string = 'en',
+  categoryFilter?: CategoryFilter
 ): FillerAnalysis {
-  const fillerList = getFillersByLevel(level, language);
+  const fillerList = getFillersByLevel(level, language, categoryFilter);
   const detectedFillers: DetectedFiller[] = [];
   let cleanedText = text;
   
