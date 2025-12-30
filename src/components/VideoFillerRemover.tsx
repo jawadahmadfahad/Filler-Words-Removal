@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { analyzeFillers, type RemovalLevel } from '@/lib/fillerWords';
-import { loadTranscriber, transcribeAudio, isTranscriberReady, subscribeToTranscriber, type TranscriberState } from '@/lib/whisperTranscriber';
+import { checkBackendHealth, transcribeFile, getBackendUrl } from '@/lib/backendApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -12,11 +12,13 @@ import {
   AlertCircle,
   Download,
   Sparkles,
-  Cpu
+  Server,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
-type ProcessingStatus = 'idle' | 'loading-model' | 'extracting' | 'transcribing' | 'analyzing' | 'complete' | 'error';
+type ProcessingStatus = 'idle' | 'checking-backend' | 'transcribing' | 'analyzing' | 'complete' | 'error';
 
 interface TranscriptionResult {
   originalTranscript: string;
@@ -29,25 +31,24 @@ export default function VideoFillerRemover() {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [progress, setProgress] = useState(0);
-  const [modelProgress, setModelProgress] = useState(0);
   const [result, setResult] = useState<TranscriptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [level, setLevel] = useState<RemovalLevel>('medium');
-  const [modelReady, setModelReady] = useState(false);
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
+  // Check backend health on mount and periodically
   useEffect(() => {
-    const unsubscribe = subscribeToTranscriber((state: TranscriberState) => {
-      if (state.status === 'ready') {
-        setModelReady(true);
-      } else if (state.status === 'loading') {
-        setModelProgress(state.progress);
-      }
-    });
-    return () => {
-      unsubscribe();
+    const checkBackend = async () => {
+      const isOnline = await checkBackendHealth();
+      setBackendOnline(isOnline);
     };
+    
+    checkBackend();
+    const interval = setInterval(checkBackend, 10000); // Check every 10s
+    
+    return () => clearInterval(interval);
   }, []);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -63,10 +64,10 @@ export default function VideoFillerRemover() {
         return;
       }
       
-      if (selectedFile.size > 100 * 1024 * 1024) {
+      if (selectedFile.size > 500 * 1024 * 1024) { // 500MB limit for local processing
         toast({
           title: 'File too large',
-          description: 'Maximum file size is 100MB',
+          description: 'Maximum file size is 500MB',
           variant: 'destructive'
         });
         return;
@@ -79,73 +80,47 @@ export default function VideoFillerRemover() {
     }
   };
 
-  const extractAudioBuffer = async (file: File): Promise<Float32Array> => {
-    const arrayBuffer = await file.arrayBuffer();
-    const audioContext = new AudioContext({ sampleRate: 16000 });
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-    
-    // Convert to mono Float32Array at 16kHz
-    const numChannels = audioBuffer.numberOfChannels;
-    const length = audioBuffer.length;
-    const output = new Float32Array(length);
-    
-    // Mix channels to mono
-    for (let channel = 0; channel < numChannels; channel++) {
-      const channelData = audioBuffer.getChannelData(channel);
-      for (let i = 0; i < length; i++) {
-        output[i] += channelData[i] / numChannels;
-      }
-    }
-    
-    await audioContext.close();
-    return output;
-  };
-
   const processVideo = async () => {
     if (!file) return;
 
     try {
       setError(null);
 
-      // Load model if not ready
-      if (!isTranscriberReady()) {
-        setStatus('loading-model');
-        setProgress(0);
-        
-        toast({
-          title: 'Loading AI Model',
-          description: 'Downloading Whisper model (~200MB). This only happens once.',
-        });
-
-        const loaded = await loadTranscriber((p) => {
-          setModelProgress(p);
-          setProgress(p * 0.4); // 0-40% for model loading
-        });
-
-        if (!loaded) {
-          throw new Error('Failed to load transcription model. Please try again.');
-        }
-        
-        setModelReady(true);
+      // Check backend
+      setStatus('checking-backend');
+      setProgress(10);
+      
+      const isOnline = await checkBackendHealth();
+      setBackendOnline(isOnline);
+      
+      if (!isOnline) {
+        throw new Error(`Backend not available at ${getBackendUrl()}. Please start the Flask server.`);
       }
 
-      // Extract audio
-      setStatus('extracting');
-      setProgress(45);
-      
-      const audioData = await extractAudioBuffer(file);
-      
-      // Transcribe
+      // Transcribe via backend
       setStatus('transcribing');
-      setProgress(50);
+      setProgress(30);
       
-      const transcript = await transcribeAudio(audioData);
+      toast({
+        title: 'Transcribing',
+        description: 'Sending file to your local Whisper backend...',
+      });
+
+      const transcribeResult = await transcribeFile(file);
       
-      if (!transcript || transcript.trim().length === 0) {
-        throw new Error('No speech detected in the audio. Please ensure your video/audio contains clear speech.');
+      if (!transcribeResult.success || !transcribeResult.transcript) {
+        throw new Error(transcribeResult.error || 'Transcription failed');
       }
 
-      // Analyze and remove fillers
+      const transcript = transcribeResult.transcript.trim();
+      
+      if (transcript.length === 0) {
+        throw new Error('No speech detected in the audio.');
+      }
+
+      setProgress(70);
+
+      // Analyze and remove fillers (locally)
       setStatus('analyzing');
       setProgress(80);
       
@@ -194,9 +169,8 @@ export default function VideoFillerRemover() {
 
   const getStatusMessage = () => {
     switch (status) {
-      case 'loading-model': return `Loading AI model... ${modelProgress}%`;
-      case 'extracting': return 'Extracting audio...';
-      case 'transcribing': return 'Transcribing speech (this runs locally in your browser)...';
+      case 'checking-backend': return 'Connecting to backend...';
+      case 'transcribing': return 'Transcribing with Whisper (this may take a few minutes)...';
       case 'analyzing': return 'Analyzing filler words...';
       case 'complete': return 'Analysis complete!';
       case 'error': return 'Error occurred';
@@ -206,16 +180,37 @@ export default function VideoFillerRemover() {
 
   return (
     <div className="space-y-6">
-      {/* Model Status Badge */}
+      {/* Backend Status Badge */}
       <div className="flex justify-center">
         <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${
-          modelReady 
+          backendOnline === true
             ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+            : backendOnline === false
+            ? 'bg-red-500/20 text-red-400 border border-red-500/30'
             : 'bg-slate-700/50 text-slate-400 border border-slate-600'
         }`}>
-          <Cpu className="w-4 h-4" />
-          {modelReady ? 'AI Model Ready (runs locally)' : 'AI Model will load on first use (~200MB)'}
+          {backendOnline === true ? (
+            <>
+              <Wifi className="w-4 h-4" />
+              Backend Connected
+            </>
+          ) : backendOnline === false ? (
+            <>
+              <WifiOff className="w-4 h-4" />
+              Backend Offline
+            </>
+          ) : (
+            <>
+              <Server className="w-4 h-4" />
+              Checking backend...
+            </>
+          )}
         </div>
+      </div>
+
+      {/* Backend URL Info */}
+      <div className="text-center text-sm text-slate-400">
+        Backend URL: <code className="bg-slate-800 px-2 py-0.5 rounded">{getBackendUrl()}</code>
       </div>
 
       {/* Upload Section */}
@@ -226,7 +221,7 @@ export default function VideoFillerRemover() {
             Upload Video/Audio
           </CardTitle>
           <CardDescription className="text-slate-400">
-            Upload a video or audio file — transcription runs entirely in your browser (no data leaves your device)
+            Upload a file — it will be sent to your local Flask backend running Whisper
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -254,7 +249,7 @@ export default function VideoFillerRemover() {
               <div className="space-y-2">
                 <Upload className="w-10 h-10 text-slate-500 mx-auto" />
                 <p className="text-slate-300">Click to upload or drag and drop</p>
-                <p className="text-sm text-slate-500">MP4, WebM, MP3, WAV (max 100MB)</p>
+                <p className="text-sm text-slate-500">MP4, WebM, MP3, WAV (max 500MB)</p>
               </div>
             )}
           </div>
@@ -280,14 +275,14 @@ export default function VideoFillerRemover() {
           {/* Process Button */}
           <Button
             onClick={processVideo}
-            disabled={!file || (status !== 'idle' && status !== 'complete' && status !== 'error')}
+            disabled={!file || !backendOnline || (status !== 'idle' && status !== 'complete' && status !== 'error')}
             className="w-full mt-4"
             size="lg"
           >
             {status === 'idle' || status === 'complete' || status === 'error' ? (
               <>
                 <Sparkles className="w-4 h-4 mr-2" />
-                Analyze & Remove Filler Words
+                {backendOnline ? 'Analyze & Remove Filler Words' : 'Start Backend First'}
               </>
             ) : (
               <>
@@ -309,7 +304,14 @@ export default function VideoFillerRemover() {
           {status === 'error' && error && (
             <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-2">
               <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-              <p className="text-red-400 text-sm">{error}</p>
+              <div>
+                <p className="text-red-400 text-sm">{error}</p>
+                {!backendOnline && (
+                  <p className="text-red-400/70 text-xs mt-1">
+                    Run <code className="bg-red-500/20 px-1 rounded">python app.py</code> in the backend folder
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </CardContent>
