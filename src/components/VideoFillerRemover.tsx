@@ -587,7 +587,7 @@ export default function VideoFillerRemover() {
             </Card>
           </div>
 
-          {/* Detected Fillers Highlighted */}
+          {/* Detected Fillers Highlighted - Same as Text Tab */}
           <Card className="bg-slate-800/50 border-slate-700">
             <CardHeader className="pb-3">
               <CardTitle className="text-lg flex items-center gap-2 text-white">
@@ -613,8 +613,10 @@ export default function VideoFillerRemover() {
               </div>
               
               {/* Highlighted Text */}
-              <div className="p-4 bg-slate-900 border border-slate-600 rounded-md text-white leading-relaxed max-h-[400px] overflow-y-auto">
-                {renderHighlightedText()}
+              <div className="p-4 bg-slate-900 border border-slate-600 rounded-md text-white leading-relaxed">
+                {result.originalTranscript ? renderHighlightedText() : (
+                  <span className="text-slate-500">No transcript available...</span>
+                )}
               </div>
             </CardContent>
           </Card>
