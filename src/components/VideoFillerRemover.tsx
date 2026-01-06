@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { analyzeFillers, FILLER_WORDS, type RemovalLevel, type FillerCategory, type CategoryFilter, type DetectedFiller } from '@/lib/fillerWords';
+import { analyzeFillers, FILLER_WORDS, type RemovalLevel, type FillerCategory, type DetectedFiller } from '@/lib/fillerWords';
 import { checkBackendHealth, transcribeFile, getBackendUrl } from '@/lib/backendApi';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { 
   Upload, 
@@ -13,30 +14,21 @@ import {
   FileVideo,
   CheckCircle2,
   AlertCircle,
-  Download,
   Sparkles,
   Server,
   Wifi,
   WifiOff,
-  BarChart3
+  Zap,
+  Trash2,
+  BarChart3,
+  Copy,
+  Check,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 type ProcessingStatus = 'idle' | 'checking-backend' | 'transcribing' | 'analyzing' | 'complete' | 'error';
-
-interface TranscriptionResult {
-  originalTranscript: string;
-  cleanedTranscript: string;
-  detectedFillers: DetectedFiller[];
-  stats: {
-    totalFillers: number;
-    hesitationCount: number;
-    crutchesCount: number;
-    phrasesCount: number;
-    repeatedWordsCount: number;
-    reductionPercentage: number;
-  };
-}
 
 const categoryColors: Record<FillerCategory, string> = {
   hesitation: 'bg-red-100 text-red-800 border-red-200',
@@ -54,17 +46,12 @@ export default function VideoFillerRemover() {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [progress, setProgress] = useState(0);
-  const [result, setResult] = useState<TranscriptionResult | null>(null);
-  const [rawTranscript, setRawTranscript] = useState<string>('');
+  const [inputText, setInputText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [level, setLevel] = useState<RemovalLevel>('medium');
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>({
-    hesitation: true,
-    crutches: true,
-    phrases: true
-  });
   const [detectRepeated, setDetectRepeated] = useState(true);
+  const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -81,30 +68,10 @@ export default function VideoFillerRemover() {
     return () => clearInterval(interval);
   }, []);
 
-  // Re-analyze when filters change
+  // Analyze text with useMemo like text tab
   const analysis = useMemo(() => {
-    if (!rawTranscript) return null;
-    return analyzeFillers(rawTranscript, level, detectRepeated, 'en', categoryFilter);
-  }, [rawTranscript, level, detectRepeated, categoryFilter]);
-
-  // Update result when analysis changes
-  useEffect(() => {
-    if (analysis && rawTranscript) {
-      setResult({
-        originalTranscript: rawTranscript,
-        cleanedTranscript: analysis.cleanedText,
-        detectedFillers: analysis.detectedFillers,
-        stats: {
-          totalFillers: analysis.stats.totalFillers,
-          hesitationCount: analysis.stats.hesitationCount,
-          crutchesCount: analysis.stats.crutchesCount,
-          phrasesCount: analysis.stats.phrasesCount,
-          repeatedWordsCount: analysis.stats.repeatedWordsCount,
-          reductionPercentage: analysis.stats.reductionPercentage
-        }
-      });
-    }
-  }, [analysis, rawTranscript]);
+    return analyzeFillers(inputText, level, detectRepeated);
+  }, [inputText, level, detectRepeated]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -129,18 +96,10 @@ export default function VideoFillerRemover() {
       }
       
       setFile(selectedFile);
-      setResult(null);
-      setRawTranscript('');
+      setInputText('');
       setError(null);
       setStatus('idle');
     }
-  };
-
-  const toggleCategory = (category: keyof CategoryFilter) => {
-    setCategoryFilter(prev => ({
-      ...prev,
-      [category]: !prev[category]
-    }));
   };
 
   const processVideo = async () => {
@@ -181,32 +140,17 @@ export default function VideoFillerRemover() {
         throw new Error('No speech detected in the audio.');
       }
 
-      setRawTranscript(transcript);
+      setInputText(transcript);
       setProgress(70);
 
-      // Analyze and remove fillers
+      // Analyzing
       setStatus('analyzing');
-      setProgress(80);
-      
-      const analysisResult = analyzeFillers(transcript, level, detectRepeated, 'en', categoryFilter);
-      
-      setResult({
-        originalTranscript: transcript,
-        cleanedTranscript: analysisResult.cleanedText,
-        detectedFillers: analysisResult.detectedFillers,
-        stats: {
-          totalFillers: analysisResult.stats.totalFillers,
-          hesitationCount: analysisResult.stats.hesitationCount,
-          crutchesCount: analysisResult.stats.crutchesCount,
-          phrasesCount: analysisResult.stats.phrasesCount,
-          repeatedWordsCount: analysisResult.stats.repeatedWordsCount,
-          reductionPercentage: analysisResult.stats.reductionPercentage
-        }
-      });
+      setProgress(90);
 
       setStatus('complete');
       setProgress(100);
       
+      const analysisResult = analyzeFillers(transcript, level, detectRepeated);
       toast({
         title: 'Analysis complete!',
         description: `Detected ${analysisResult.stats.totalFillers} filler words`
@@ -224,18 +168,18 @@ export default function VideoFillerRemover() {
     }
   };
 
-  const handleDownload = () => {
-    if (!result) return;
-    
-    const content = `Original Transcript:\n${result.originalTranscript}\n\n---\n\nCleaned Transcript (Filler Words Removed):\n${result.cleanedTranscript}\n\n---\n\nStatistics:\n- Total fillers detected: ${result.stats.totalFillers}\n- Hesitations: ${result.stats.hesitationCount}\n- Crutches: ${result.stats.crutchesCount}\n- Phrases: ${result.stats.phrasesCount}\n- Repeated words: ${result.stats.repeatedWordsCount}\n- Reduction: ${result.stats.reductionPercentage}%`;
-    
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'transcript-cleaned.txt';
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(analysis.cleanedText);
+    setCopied(true);
+    toast({ title: "Copied!", description: "Cleaned text copied to clipboard" });
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleClear = () => {
+    setInputText('');
+    setFile(null);
+    setStatus('idle');
+    setError(null);
   };
 
   const getStatusMessage = () => {
@@ -249,15 +193,15 @@ export default function VideoFillerRemover() {
     }
   };
 
-  // Render text with highlighted fillers
+  // Render text with highlighted fillers - exact same as text tab
   const renderHighlightedText = () => {
-    if (!result || !result.originalTranscript) return null;
+    if (!inputText) return null;
     
     let lastIndex = 0;
     const elements: JSX.Element[] = [];
     
     // Sort fillers by start index
-    const sortedFillers = [...result.detectedFillers].sort((a, b) => a.startIndex - b.startIndex);
+    const sortedFillers = [...analysis.detectedFillers].sort((a, b) => a.startIndex - b.startIndex);
     
     // Remove overlapping fillers (keep the longer ones)
     const nonOverlapping = sortedFillers.filter((filler, index) => {
@@ -275,7 +219,7 @@ export default function VideoFillerRemover() {
       if (filler.startIndex > lastIndex) {
         elements.push(
           <span key={`text-${lastIndex}`}>
-            {result.originalTranscript.slice(lastIndex, filler.startIndex)}
+            {inputText.slice(lastIndex, filler.startIndex)}
           </span>
         );
       }
@@ -287,7 +231,7 @@ export default function VideoFillerRemover() {
           className={`px-1 py-0.5 rounded font-medium ${categoryColors[filler.category]}`}
           title={categoryLabels[filler.category]}
         >
-          {result.originalTranscript.slice(filler.startIndex, filler.endIndex)}
+          {inputText.slice(filler.startIndex, filler.endIndex)}
         </mark>
       );
       
@@ -295,9 +239,9 @@ export default function VideoFillerRemover() {
     }
     
     // Add remaining text
-    if (lastIndex < result.originalTranscript.length) {
+    if (lastIndex < inputText.length) {
       elements.push(
-        <span key={`text-end`}>{result.originalTranscript.slice(lastIndex)}</span>
+        <span key={`text-end`}>{inputText.slice(lastIndex)}</span>
       );
     }
     
@@ -380,75 +324,6 @@ export default function VideoFillerRemover() {
             )}
           </div>
 
-          {/* Category Filters */}
-          <div className="mt-4 p-4 bg-slate-900/50 rounded-lg border border-slate-700">
-            <Label className="text-slate-300 font-medium mb-3 block">Detection Categories:</Label>
-            <div className="flex flex-wrap gap-4">
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="cat-hesitation"
-                  checked={categoryFilter.hesitation}
-                  onCheckedChange={() => toggleCategory('hesitation')}
-                  className="border-red-500 data-[state=checked]:bg-red-500"
-                />
-                <Label htmlFor="cat-hesitation" className="text-red-400 cursor-pointer">
-                  Hesitation (um, uh, er)
-                </Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="cat-crutches"
-                  checked={categoryFilter.crutches}
-                  onCheckedChange={() => toggleCategory('crutches')}
-                  className="border-amber-500 data-[state=checked]:bg-amber-500"
-                />
-                <Label htmlFor="cat-crutches" className="text-amber-400 cursor-pointer">
-                  Crutches (like, basically)
-                </Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="cat-phrases"
-                  checked={categoryFilter.phrases}
-                  onCheckedChange={() => toggleCategory('phrases')}
-                  className="border-purple-500 data-[state=checked]:bg-purple-500"
-                />
-                <Label htmlFor="cat-phrases" className="text-purple-400 cursor-pointer">
-                  Phrases (you know, I mean)
-                </Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="detect-repeated"
-                  checked={detectRepeated}
-                  onCheckedChange={() => setDetectRepeated(!detectRepeated)}
-                  className="border-blue-500 data-[state=checked]:bg-blue-500"
-                />
-                <Label htmlFor="detect-repeated" className="text-blue-400 cursor-pointer">
-                  Repeated words
-                </Label>
-              </div>
-            </div>
-          </div>
-
-          {/* Level Selection */}
-          <div className="mt-4 flex items-center gap-3">
-            <span className="text-slate-300 font-medium">Removal Level:</span>
-            <div className="flex gap-1">
-              {(['conservative', 'medium', 'aggressive'] as RemovalLevel[]).map((l) => (
-                <Button
-                  key={l}
-                  variant={level === l ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setLevel(l)}
-                  className={level === l ? '' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}
-                >
-                  {l.charAt(0).toUpperCase() + l.slice(1)}
-                </Button>
-              ))}
-            </div>
-          </div>
-
           {/* Process Button */}
           <Button
             onClick={processVideo}
@@ -459,7 +334,7 @@ export default function VideoFillerRemover() {
             {status === 'idle' || status === 'complete' || status === 'error' ? (
               <>
                 <Sparkles className="w-4 h-4 mr-2" />
-                {backendOnline ? 'Analyze & Remove Filler Words' : 'Start Backend First'}
+                {backendOnline ? 'Transcribe & Analyze' : 'Start Backend First'}
               </>
             ) : (
               <>
@@ -470,7 +345,7 @@ export default function VideoFillerRemover() {
           </Button>
 
           {/* Progress */}
-          {status !== 'idle' && status !== 'error' && (
+          {status !== 'idle' && status !== 'error' && status !== 'complete' && (
             <div className="mt-4 space-y-2">
               <Progress value={progress} className="h-2" />
               <p className="text-sm text-center text-slate-400">{getStatusMessage()}</p>
@@ -494,178 +369,241 @@ export default function VideoFillerRemover() {
         </CardContent>
       </Card>
 
-      {/* Results Section */}
-      {result && (
-        <>
-          {/* Transcripts - Original & Cleaned */}
-          <div className="grid md:grid-cols-2 gap-6">
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg text-white">Original Transcript</CardTitle>
-                <CardDescription className="text-slate-400">
-                  {result.originalTranscript.split(' ').length} words
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="p-3 bg-slate-900 border border-slate-600 rounded-md text-white max-h-[200px] overflow-y-auto">
-                  {result.originalTranscript}
-                </div>
-              </CardContent>
-            </Card>
+      {/* Controls - Same as Text Tab */}
+      <Card className="bg-slate-800/50 border-slate-700">
+        <CardContent className="p-4">
+          <div className="flex flex-wrap items-center gap-6">
+            {/* Removal Level */}
+            <div className="flex items-center gap-3">
+              <Label className="text-slate-300 font-medium">Level:</Label>
+              <div className="flex gap-1">
+                {(['conservative', 'medium', 'aggressive'] as RemovalLevel[]).map((l) => (
+                  <Button
+                    key={l}
+                    variant={level === l ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setLevel(l)}
+                    className={level === l ? '' : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}
+                  >
+                    {l.charAt(0).toUpperCase() + l.slice(1)}
+                  </Button>
+                ))}
+              </div>
+            </div>
 
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg text-white flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-green-500" />
-                  Cleaned Transcript
-                </CardTitle>
-                <CardDescription className="text-slate-400">
-                  {result.cleanedTranscript.split(' ').length} words
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="p-3 bg-slate-900 border border-slate-600 rounded-md text-white max-h-[200px] overflow-y-auto">
-                  {result.cleanedTranscript}
-                </div>
-                <Button
-                  onClick={handleDownload}
-                  variant="outline"
-                  className="w-full mt-3 bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600"
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  Download Transcript
-                </Button>
-              </CardContent>
-            </Card>
+            {/* Detect Repeated */}
+            <div className="flex items-center gap-2">
+              <Switch
+                id="detect-repeated-video"
+                checked={detectRepeated}
+                onCheckedChange={setDetectRepeated}
+              />
+              <Label htmlFor="detect-repeated-video" className="text-slate-300">
+                Detect repeated words
+              </Label>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2 ml-auto">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleClear}
+                className="bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600"
+              >
+                <Trash2 className="w-4 h-4 mr-1" />
+                Clear
+              </Button>
+            </div>
           </div>
+        </CardContent>
+      </Card>
 
-          {/* Detected Fillers - Highlighted Preview */}
-          <Card className="bg-slate-800/50 border-slate-700">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg flex items-center gap-2 text-white">
-                <BarChart3 className="w-5 h-5 text-blue-500" />
-                Detected Fillers
-              </CardTitle>
-              <CardDescription className="text-slate-400">
-                Filler words highlighted by category
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* Legend */}
-              <div className="flex flex-wrap gap-3 mb-4">
-                <Badge className={`${categoryColors.hesitation} border`}>
-                  Hesitation (um, uh, er)
-                </Badge>
-                <Badge className={`${categoryColors.crutches} border`}>
-                  Verbal Crutch (like, basically)
-                </Badge>
-                <Badge className={`${categoryColors.phrases} border`}>
-                  Filler Phrase (you know, I mean)
-                </Badge>
-              </div>
-              
-              {/* Highlighted Text */}
-              <div className="p-4 bg-slate-900 border border-slate-600 rounded-md text-white leading-relaxed">
-                {result.originalTranscript ? renderHighlightedText() : (
-                  <span className="text-slate-500">No transcript available...</span>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+      {/* Main Content - Same as Text Tab */}
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* Input / Original */}
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2 text-white">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              Original Text
+            </CardTitle>
+            <CardDescription className="text-slate-400">
+              Transcribed text from video/audio
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Textarea
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder="Transcribed text will appear here after processing..."
+              className="min-h-[200px] bg-slate-900 border-slate-600 text-white placeholder:text-slate-500 resize-none"
+            />
+            <div className="mt-3 text-sm text-slate-400">
+              {analysis.stats.originalWordCount} words
+            </div>
+          </CardContent>
+        </Card>
 
-          {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-primary">{result.stats.totalFillers}</div>
-                <div className="text-xs text-slate-400 mt-1">Total Fillers</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-red-500">{result.stats.hesitationCount}</div>
-                <div className="text-xs text-slate-400 mt-1">Hesitations</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-amber-500">{result.stats.crutchesCount}</div>
-                <div className="text-xs text-slate-400 mt-1">Crutches</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-purple-500">{result.stats.phrasesCount}</div>
-                <div className="text-xs text-slate-400 mt-1">Phrases</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-blue-500">{result.stats.repeatedWordsCount}</div>
-                <div className="text-xs text-slate-400 mt-1">Repeated</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-green-500">{result.stats.reductionPercentage}%</div>
-                <div className="text-xs text-slate-400 mt-1">Reduction</div>
-              </CardContent>
-            </Card>
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardContent className="p-4 text-center">
-                <div className="text-3xl font-bold text-slate-300">
-                  {result.originalTranscript.split(' ').length - result.cleanedTranscript.split(' ').length}
-                </div>
-                <div className="text-xs text-slate-400 mt-1">Words Saved</div>
-              </CardContent>
-            </Card>
+        {/* Output / Cleaned */}
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2 text-white">
+              <Zap className="w-5 h-5 text-green-500" />
+              Cleaned Text
+            </CardTitle>
+            <CardDescription className="text-slate-400">
+              Text with filler words removed
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="min-h-[200px] p-3 bg-slate-900 border border-slate-600 rounded-md text-white">
+              {analysis.cleanedText || <span className="text-slate-500">Cleaned text will appear here...</span>}
+            </div>
+            <div className="mt-3 flex items-center justify-between">
+              <span className="text-sm text-slate-400">
+                {analysis.stats.cleanedWordCount} words
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCopy}
+                disabled={!analysis.cleanedText}
+                className="bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600"
+              >
+                {copied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
+                {copied ? 'Copied!' : 'Copy'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Highlighted Preview - Same as Text Tab */}
+      <Card className="bg-slate-800/50 border-slate-700">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg flex items-center gap-2 text-white">
+            <BarChart3 className="w-5 h-5 text-blue-500" />
+            Detected Fillers
+          </CardTitle>
+          <CardDescription className="text-slate-400">
+            Filler words highlighted by category
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {/* Legend */}
+          <div className="flex flex-wrap gap-3 mb-4">
+            <Badge className={`${categoryColors.hesitation} border`}>
+              Hesitation (um, uh, er)
+            </Badge>
+            <Badge className={`${categoryColors.crutches} border`}>
+              Verbal Crutch (like, basically)
+            </Badge>
+            <Badge className={`${categoryColors.phrases} border`}>
+              Filler Phrase (you know, I mean)
+            </Badge>
           </div>
+          
+          {/* Highlighted Text */}
+          <div className="p-4 bg-slate-900 border border-slate-600 rounded-md text-white leading-relaxed">
+            {inputText ? renderHighlightedText() : (
+              <span className="text-slate-500">Upload and process a file to see highlighted fillers...</span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-          {/* Filler Words Reference */}
-          <Card className="bg-slate-800/50 border-slate-700">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-lg text-white">Filler Words Reference</CardTitle>
-              <CardDescription className="text-slate-400">
-                Words detected at each removal level
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid md:grid-cols-3 gap-4">
-                <div className={!categoryFilter.hesitation ? 'opacity-40' : ''}>
-                  <h4 className="font-medium text-red-400 mb-2">Hesitation Sounds</h4>
-                  <div className="flex flex-wrap gap-1">
-                    {FILLER_WORDS.en.hesitation.slice(0, 12).map((word) => (
-                      <Badge key={word} variant="outline" className="bg-red-500/10 border-red-500/30 text-red-300">
-                        {word}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-                <div className={!categoryFilter.crutches ? 'opacity-40' : ''}>
-                  <h4 className="font-medium text-amber-400 mb-2">Verbal Crutches</h4>
-                  <div className="flex flex-wrap gap-1">
-                    {FILLER_WORDS.en.crutches.slice(0, 12).map((word) => (
-                      <Badge key={word} variant="outline" className="bg-amber-500/10 border-amber-500/30 text-amber-300">
-                        {word}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-                <div className={!categoryFilter.phrases ? 'opacity-40' : ''}>
-                  <h4 className="font-medium text-purple-400 mb-2">Filler Phrases</h4>
-                  <div className="flex flex-wrap gap-1">
-                    {FILLER_WORDS.en.phrases.slice(0, 8).map((phrase) => (
-                      <Badge key={phrase} variant="outline" className="bg-purple-500/10 border-purple-500/30 text-purple-300">
-                        {phrase}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
+      {/* Stats - Same as Text Tab */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-primary">{analysis.stats.totalFillers}</div>
+            <div className="text-xs text-slate-400 mt-1">Total Fillers</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-red-500">{analysis.stats.hesitationCount}</div>
+            <div className="text-xs text-slate-400 mt-1">Hesitations</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-amber-500">{analysis.stats.crutchesCount}</div>
+            <div className="text-xs text-slate-400 mt-1">Crutches</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-purple-500">{analysis.stats.phrasesCount}</div>
+            <div className="text-xs text-slate-400 mt-1">Phrases</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-blue-500">{analysis.stats.repeatedWordsCount}</div>
+            <div className="text-xs text-slate-400 mt-1">Repeated</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-green-500">{analysis.stats.reductionPercentage}%</div>
+            <div className="text-xs text-slate-400 mt-1">Reduction</div>
+          </CardContent>
+        </Card>
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-slate-300">
+              {analysis.stats.originalWordCount - analysis.stats.cleanedWordCount}
+            </div>
+            <div className="text-xs text-slate-400 mt-1">Words Saved</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Filler Words Reference - Same as Text Tab */}
+      <Card className="bg-slate-800/50 border-slate-700">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg text-white">Filler Words Reference</CardTitle>
+          <CardDescription className="text-slate-400">
+            Words detected at each removal level
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid md:grid-cols-3 gap-4">
+            <div>
+              <h4 className="font-medium text-red-400 mb-2">Hesitation Sounds</h4>
+              <div className="flex flex-wrap gap-1">
+                {FILLER_WORDS.en.hesitation.slice(0, 12).map((word) => (
+                  <Badge key={word} variant="outline" className="bg-red-500/10 border-red-500/30 text-red-300">
+                    {word}
+                  </Badge>
+                ))}
               </div>
-            </CardContent>
-          </Card>
-        </>
-      )}
+            </div>
+            <div>
+              <h4 className="font-medium text-amber-400 mb-2">Verbal Crutches</h4>
+              <div className="flex flex-wrap gap-1">
+                {FILLER_WORDS.en.crutches.slice(0, 12).map((word) => (
+                  <Badge key={word} variant="outline" className="bg-amber-500/10 border-amber-500/30 text-amber-300">
+                    {word}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+            <div>
+              <h4 className="font-medium text-purple-400 mb-2">Filler Phrases</h4>
+              <div className="flex flex-wrap gap-1">
+                {FILLER_WORDS.en.phrases.slice(0, 8).map((phrase) => (
+                  <Badge key={phrase} variant="outline" className="bg-purple-500/10 border-purple-500/30 text-purple-300">
+                    {phrase}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
